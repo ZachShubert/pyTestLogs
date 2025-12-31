@@ -8,6 +8,8 @@ import base64
 from datetime import datetime
 from typing import List, Dict, Optional, Union
 import io
+import matplotlib.pyplot as plt
+import numpy as np
 
 
 class HTMLTestReport:
@@ -16,21 +18,92 @@ class HTMLTestReport:
     Supports banners, headers, sections, tables, plots, and more.
     """
 
-    def __init__(self, title: str = "Test Report"):
+    def __init__(self, title: str = "Test Report", sticky_header: bool = False, version: Optional[str] = None):
         """
         Initialize a new HTML test report.
 
         Args:
             title: The title of the test report
+            sticky_header: If True, banner and navbar stay fixed at top when scrolling
+            version: Test script version in format "major.minor.patch" (e.g., "1.2.3")
+                    Each number determines the gradient color for banner, navbar, and footer
         """
         self.title = title
+        self.sticky_header = sticky_header
+        self.version = version
         self.lines = []
         self.last_table_index = None  # Track the last table position
         self.last_table_specs = None  # Track spec columns for auto pass/fail
+        self.navbar_items = []  # Store navbar items
+        self.footer_class = 'no-version'  # Will be set in _init_html
         self._init_html()
 
     def _init_html(self):
         """Initialize the HTML document with styles and header."""
+        sticky_class = ' sticky' if self.sticky_header else ''
+
+        # Determine classes and gradients based on version
+        banner_gradient = ''
+        navbar_gradient = ''
+        footer_gradient = ''
+        banner_class = 'no-version'
+        navbar_class = 'no-version'
+        footer_class = 'no-version'
+
+        # Build version display for banner
+        banner_version_html = ''
+        if self.version:
+            banner_version_html = f'<span class="banner-version">Version: {self.version}</span>'
+
+        if self.version:
+            version_parts = self.version.split('.')
+            if len(version_parts) >= 3:
+                major, minor, patch = version_parts[0], version_parts[1], version_parts[2]
+
+                # Map version numbers to colors (cycling through a palette)
+                color_palette = [
+                    '#e74c3c',  # Red
+                    '#3498db',  # Blue
+                    '#2ecc71',  # Green
+                    '#f39c12',  # Orange
+                    '#9b59b6',  # Purple
+                    '#1abc9c',  # Turquoise
+                    '#e67e22',  # Carrot
+                    '#34495e',  # Wet Asphalt
+                ]
+
+                major_color = color_palette[int(major) % len(color_palette)]
+                minor_color = color_palette[int(minor) % len(color_palette)]
+                patch_color = color_palette[int(patch) % len(color_palette)]
+
+                banner_class = 'with-version'
+                navbar_class = 'with-version'
+                footer_class = 'with-version'
+
+                # Create gradient styles with actual color values
+                banner_gradient = f"""
+        .banner.with-version {{
+            background: linear-gradient(135deg, {major_color} 0%, #34495e 35%) !important;
+        }}"""
+
+                navbar_gradient = f"""
+        .navbar.with-version {{
+            background: linear-gradient(135deg, {minor_color} 0%, #ecf0f1 35%) !important;
+        }}
+
+        [data-theme="dark"] .navbar.with-version {{
+            background: linear-gradient(135deg, {minor_color} 0%, #2d2d2d 35%) !important;
+        }}"""
+
+                footer_gradient = f"""
+        .footer.with-version {{
+            background: linear-gradient(135deg, {patch_color} 0%, #ecf0f1 35%) !important;
+        }}
+
+        [data-theme="dark"] .footer.with-version {{
+            background: linear-gradient(135deg, {patch_color} 0%, #2d2d2d 35%) !important;
+        }}"""
+
         html_header = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -49,7 +122,7 @@ class HTMLTestReport:
             --table-header-bg: #e9ecef;
             --code-bg: #f5f5f5;
         }}
-        
+
         [data-theme="dark"] {{
             --bg-color: #1e1e1e;
             --text-color: #e0e0e0;
@@ -61,75 +134,135 @@ class HTMLTestReport:
             --table-header-bg: #333333;
             --code-bg: #2d2d2d;
         }}
-        
+
         * {{
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }}
-        
+
         body {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             background-color: var(--bg-color);
             color: var(--text-color);
-            line-height: 1.6;
+            line-height: 1;
             transition: background-color 0.3s, color 0.3s;
         }}
-        
+
         .banner {{
-            background: linear-gradient(135deg, var(--banner-bg) 0%, #34495e 100%);
             color: var(--banner-text);
-            padding: 20px 30px;
+            padding: 10px 10px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            position: relative;
+            z-index: 100;
         }}
-        
+
+        .banner.no-version {{
+            background: linear-gradient(135deg, var(--banner-bg) 0%, #34495e 100%);
+        }}
+        {banner_gradient}
+
+        .banner.sticky {{
+            position: sticky;
+            top: 0;
+        }}
+
         .banner h1 {{
             font-size: 24px;
             font-weight: 600;
         }}
         
-        .theme-toggle {{
-            background: rgba(255,255,255,0.2);
-            border: none;
+        .banner-version {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 20px;
+            # background: rgba(255,255,255,0.0);
             color: var(--banner-text);
-            padding: 8px 16px;
+            padding: 6px 12px;
             border-radius: 4px;
-            cursor: pointer;
-            font-size: 14px;
-            transition: background 0.3s;
         }}
-        
-        .theme-toggle:hover {{
-            background: rgba(255,255,255,0.3);
+
+        .navbar {{
+            padding: 10px 10px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+            position: relative;
+            z-index: 99;
         }}
-        
+
+        .navbar.no-version {{
+            background-color: var(--header-bg);
+        }}
+        {navbar_gradient}
+
+        .navbar.sticky {{
+            position: sticky;
+            top: 0;
+        }}
+
+        .banner.sticky + .navbar.sticky {{
+            top: 52px; /* Height of banner */
+        }}
+
+        .navbar-container {{
+            max-width: 1200px;
+            margin: 0 auto;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }}
+
+        .navbar-item {{
+            background-color: var(--bg-color);
+            padding: 5px 10px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            min-width: 150px;
+            flex: 1;
+        }}
+
+        .navbar-item-title {{
+            font-weight: 600;
+            font-size: 18px;
+            color: #7f8c8d;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 0px;
+        }}
+
+        .navbar-item-value {{
+            font-size: 16px;
+            color: var(--text-color);
+            word-wrap: break-word;
+        }}
+
         .container {{
             max-width: 1200px;
             margin: 0 auto;
-            padding: 20px;
+            padding: 10px;
+            padding-bottom: 80px; /* Extra space for sticky footer */
         }}
-        
+
         .header {{
             background-color: var(--header-bg);
-            padding: 20px;
+            padding: 10px;
             border-radius: 8px;
             margin-bottom: 20px;
             border-left: 4px solid #3498db;
+            display: none; /* Hidden by default, use navbar instead */
         }}
-        
+
         .header-item {{
             margin: 8px 0;
         }}
-        
+
         .header-label {{
             font-weight: 600;
             display: inline-block;
             min-width: 150px;
         }}
-        
+
         .section {{
             background-color: var(--section-bg);
             padding: 20px;
@@ -137,7 +270,7 @@ class HTMLTestReport:
             border-radius: 8px;
             border: 1px solid var(--border-color);
         }}
-        
+
         .section-title {{
             font-size: 20px;
             font-weight: 600;
@@ -146,74 +279,75 @@ class HTMLTestReport:
             border-bottom: 2px solid #3498db;
             padding-bottom: 8px;
         }}
-        
+
         /* Category color classes for section titles */
         .section-title.category-voltage {{
             border-bottom-color: #3498db;
             color: #3498db;
         }}
-        
+
         .section-title.category-current {{
             border-bottom-color: #e67e22;
             color: #e67e22;
         }}
-        
+
         .section-title.category-connection {{
             border-bottom-color: #9b59b6;
             color: #9b59b6;
         }}
-        
+
         .section-title.category-temperature {{
             border-bottom-color: #e74c3c;
             color: #e74c3c;
         }}
-        
+
         .section-title.category-power {{
             border-bottom-color: #f39c12;
             color: #f39c12;
         }}
-        
+
         .section-title.category-resistance {{
             border-bottom-color: #16a085;
             color: #16a085;
         }}
-        
+
         .section-title.category-frequency {{
             border-bottom-color: #8e44ad;
             color: #8e44ad;
         }}
-        
+
         .section-title.category-digital {{
             border-bottom-color: #2c3e50;
             color: #2c3e50;
         }}
-        
+
         .section-title.category-custom {{
             border-bottom-color: #34495e;
             color: #34495e;
         }}
-        
+
         [data-theme="dark"] .section-title {{
             color: #e0e0e0;
         }}
-        
+
         .line {{
             margin: 10px 0;
         }}
-        
+
         .line-break {{
             height: 1px;
             background-color: var(--border-color);
             margin: 15px 0;
         }}
-        
+
         table {{
             width: 100%;
             border-collapse: collapse;
             margin: 15px 0;
             background-color: var(--bg-color);
+            line-height: 0.5;
         }}
-        
+
         th {{
             background-color: var(--table-header-bg);
             padding: 12px;
@@ -221,74 +355,74 @@ class HTMLTestReport:
             font-weight: 600;
             border: 1px solid var(--border-color);
         }}
-        
+
         /* Category color classes for table headers */
         .category-voltage th {{
             background-color: #3498db !important;
             color: white;
         }}
-        
+
         .category-current th {{
             background-color: #e67e22 !important;
             color: white;
         }}
-        
+
         .category-connection th {{
             background-color: #9b59b6 !important;
             color: white;
         }}
-        
+
         .category-temperature th {{
             background-color: #e74c3c !important;
             color: white;
         }}
-        
+
         .category-power th {{
             background-color: #f39c12 !important;
             color: white;
         }}
-        
+
         .category-resistance th {{
             background-color: #16a085 !important;
             color: white;
         }}
-        
+
         .category-frequency th {{
             background-color: #8e44ad !important;
             color: white;
         }}
-        
+
         .category-digital th {{
             background-color: #2c3e50 !important;
             color: white;
         }}
-        
+
         .category-custom th {{
             background-color: #34495e !important;
             color: white;
         }}
-        
+
         td {{
             padding: 10px 12px;
             border: 1px solid var(--border-color);
         }}
-        
+
         tr:nth-child(even) {{
             background-color: var(--section-bg);
         }}
-        
+
         .figure {{
             margin: 20px 0;
             text-align: center;
         }}
-        
+
         .figure img {{
             max-width: 100%;
             height: auto;
             border: 1px solid var(--border-color);
             border-radius: 4px;
         }}
-        
+
         .figure-title {{
             font-weight: 600;
             margin-top: 10px;
@@ -296,48 +430,60 @@ class HTMLTestReport:
             color: #555;
         }}
         
-        [data-theme="dark"] .figure-title {{
-            color: #aaa;
+        .figure-light {{
+            display: block;
         }}
         
+        .figure-dark {{
+            display: none;
+        }}
+        
+        [data-theme="dark"] .figure-light {{
+            display: none;
+        }}
+        
+        [data-theme="dark"] .figure-dark {{
+            display: block;
+        }}
+
         .status-pass {{
             color: #27ae60;
             font-weight: 600;
         }}
-        
+
         .status-fail {{
             color: #e74c3c;
             font-weight: 600;
         }}
-        
+
         .status-warning {{
             color: #f39c12;
             font-weight: 600;
         }}
-        
+
         /* Pass/Fail cell styling */
         .cell-pass {{
             background-color: #d4edda !important;
             color: #155724;
             font-weight: 600;
         }}
-        
+
         .cell-fail {{
             background-color: #f8d7da !important;
             color: #721c24;
             font-weight: 600;
         }}
-        
+
         [data-theme="dark"] .cell-pass {{
             background-color: #1e4620 !important;
             color: #4caf50;
         }}
-        
+
         [data-theme="dark"] .cell-fail {{
             background-color: #5a1a1a !important;
             color: #ef5350;
         }}
-        
+
         code {{
             background-color: var(--code-bg);
             padding: 2px 6px;
@@ -345,10 +491,48 @@ class HTMLTestReport:
             font-family: 'Courier New', monospace;
             font-size: 13px;
         }}
-        
+
         .timestamp {{
             font-size: 12px;
             color: #7f8c8d;
+        }}
+
+        .footer {{
+            padding: 5px 5px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            position: sticky;
+            bottom: 0;
+            z-index: 98;
+        }}
+
+        .footer.no-version {{
+            background-color: var(--header-bg);
+        }}
+        {footer_gradient}
+
+        .footer-version {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 20px;
+            color: var(--text-color);
+            font-weight: 600;
+        }}
+
+        .footer-theme-toggle {{
+            background: var(--section-bg);
+            border: 1px solid var(--border-color);
+            color: var(--text-color);
+            padding: 8px 16px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }}
+
+        .footer-theme-toggle:hover {{
+            background: var(--border-color);
         }}
     </style>
     <script>
@@ -357,33 +541,64 @@ class HTMLTestReport:
             const currentTheme = html.getAttribute('data-theme');
             const newTheme = currentTheme === 'dark' ? 'light' : 'dark';
             html.setAttribute('data-theme', newTheme);
-            
-            const button = document.querySelector('.theme-toggle');
+
+            const button = document.querySelector('.footer-theme-toggle');
             button.textContent = newTheme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode';
         }}
     </script>
 </head>
 <body>
-    <div class="banner">
+    <div class="banner {banner_class}{sticky_class}">
         <h1>{self.title}</h1>
-        <button class="theme-toggle" onclick="toggleTheme()">🌙 Dark Mode</button>
+        {banner_version_html}
+    </div>
+    <div class="navbar {navbar_class}{sticky_class}" id="navbar">
+        <div class="navbar-container" id="navbar-container">
+            <!-- Navbar items will be inserted here -->
+        </div>
     </div>
     <div class="container">
 """
         self.lines.append(html_header)
 
-    def add_header(self, info: Dict[str, str]):
+        # Store footer class for finalize
+        self.footer_class = footer_class
+
+    def add_navbar_item(self, title: str, value: str):
         """
-        Add a header section with test information.
+        Add an item to the navigation bar.
 
         Args:
-            info: Dictionary of label-value pairs (e.g., {"Serial Number": "12345", "Timestamp": "..."})
+            title: The title/label (will be bold and uppercase)
+            value: The value/text (will be normal weight)
         """
-        header_html = '<div class="header">\n'
-        for label, value in info.items():
-            header_html += f'    <div class="header-item"><span class="header-label">{label}:</span> {value}</div>\n'
-        header_html += '</div>\n'
-        self.lines.append(header_html)
+        self.navbar_items.append((title, value))
+        return self
+
+    def _build_navbar(self) -> str:
+        """Build the navbar HTML from stored items."""
+        if not self.navbar_items:
+            return ""
+
+        navbar_html = ""
+        for title, value in self.navbar_items:
+            navbar_html += f"""            <div class="navbar-item">
+                <div class="navbar-item-title">{title}</div>
+                <div class="navbar-item-value">{value}</div>
+            </div>
+"""
+        return navbar_html
+
+    def add_header(self, info: Dict[str, str]):
+        """
+        Add header information to the navbar (replaces old header method).
+        This is a convenience method that adds multiple navbar items at once.
+
+        Args:
+            info: Dictionary of title-value pairs
+        """
+        for title, value in info.items():
+            self.add_navbar_item(title, value)
         return self
 
     def start_section(self, title: str, category: Optional[str] = None):
@@ -586,9 +801,9 @@ class HTMLTestReport:
 
         # Insert the new row before </tbody>
         updated_table_html = (
-            table_html[:insert_pos] +
-            new_row_html +
-            table_html[insert_pos:]
+                table_html[:insert_pos] +
+                new_row_html +
+                table_html[insert_pos:]
         )
 
         # Update the stored table HTML
@@ -611,6 +826,36 @@ class HTMLTestReport:
 
         figure_html = '    <div class="figure">\n'
         figure_html += f'        <img src="data:image/{format};base64,{img_base64}" alt="Plot">\n'
+        if title:
+            figure_html += f'        <div class="figure-title">{title}</div>\n'
+        figure_html += '    </div>\n'
+        self.lines.append(figure_html)
+        return self
+
+    def add_dual_plot(self, light_plot_data: Union[bytes, str], dark_plot_data: Union[bytes, str],
+                      title: Optional[str] = None, format: str = "png"):
+        """
+        Add light and dark mode versions of a plot.
+
+        Args:
+            light_plot_data: Plot data for light mode
+            dark_plot_data: Plot data for dark mode
+            title: Optional figure title
+            format: Image format (png, jpg, svg, etc.)
+        """
+        if isinstance(light_plot_data, bytes):
+            light_base64 = base64.b64encode(light_plot_data).decode('utf-8')
+        else:
+            light_base64 = light_plot_data
+
+        if isinstance(dark_plot_data, bytes):
+            dark_base64 = base64.b64encode(dark_plot_data).decode('utf-8')
+        else:
+            dark_base64 = dark_plot_data
+
+        figure_html = '    <div class="figure">\n'
+        figure_html += f'        <img class="figure-light" src="data:image/{format};base64,{light_base64}" alt="Plot">\n'
+        figure_html += f'        <img class="figure-dark" src="data:image/{format};base64,{dark_base64}" alt="Plot">\n'
         if title:
             figure_html += f'        <div class="figure-title">{title}</div>\n'
         figure_html += '    </div>\n'
@@ -644,11 +889,26 @@ class HTMLTestReport:
         Returns:
             Complete HTML string
         """
-        footer = """    </div>
+        # Build navbar content
+        navbar_html = self._build_navbar()
+
+        # Insert navbar items into the HTML
+        full_html = ''.join(self.lines)
+        full_html = full_html.replace(
+            '            <!-- Navbar items will be inserted here -->',
+            navbar_html
+        )
+
+        # Build footer
+        footer_version = f'Version: {self.version}' if self.version else ''
+        footer = f"""    </div>
+    <div class="footer {self.footer_class}">
+        <div class="footer-version">{footer_version}</div>
+        <button class="footer-theme-toggle" onclick="toggleTheme()">🌙 Dark Mode</button>
+    </div>
 </body>
 </html>"""
-        self.lines.append(footer)
-        return ''.join(self.lines)
+        return full_html + footer
 
     def save(self, filename: str):
         """
@@ -671,20 +931,161 @@ class HTMLTestReport:
         except ImportError:
             print("IPython not available - cannot display in notebook")
 
+def create_scatter_plot_example():
+    # Create scatter plot - LIGHT VERSION
+    fig1_light, ax1 = plt.subplots(figsize=(8, 5), facecolor='white')
+    ax1.set_facecolor('white')
+    x_scatter = np.random.randn(100)
+    y_scatter = 2 * x_scatter + np.random.randn(100) * 0.5
+    ax1.scatter(x_scatter, y_scatter, alpha=0.6, c='blue', edgecolors='black')
+    ax1.set_xlabel('X Value', color='black')
+    ax1.set_ylabel('Y Value', color='black')
+    ax1.set_title('Scatter Plot: Correlation Analysis', color='black')
+    ax1.tick_params(colors='black')
+    ax1.grid(True, alpha=0.3, color='gray')
+    for spine in ax1.spines.values():
+        spine.set_edgecolor('black')
+
+    buf1_light = io.BytesIO()
+    fig1_light.savefig(buf1_light, format='png', dpi=150, bbox_inches='tight')
+    buf1_light.seek(0)
+    scatter_light = buf1_light.read()
+    buf1_light.close()
+    plt.close(fig1_light)
+
+    # Create scatter plot - DARK VERSION
+    fig1_dark, ax1 = plt.subplots(figsize=(8, 5), facecolor='#1e1e1e')
+    ax1.set_facecolor('#1e1e1e')
+    ax1.scatter(x_scatter, y_scatter, alpha=0.6, c='#3498db', edgecolors='white')
+    ax1.set_xlabel('X Value', color='white')
+    ax1.set_ylabel('Y Value', color='white')
+    ax1.set_title('Scatter Plot: Correlation Analysis', color='white')
+    ax1.tick_params(colors='white')
+    ax1.grid(True, alpha=0.3, color='gray')
+    for spine in ax1.spines.values():
+        spine.set_edgecolor('white')
+
+    buf1_dark = io.BytesIO()
+    fig1_dark.savefig(buf1_dark, format='png', dpi=150, bbox_inches='tight')
+    buf1_dark.seek(0)
+    scatter_dark = buf1_dark.read()
+    buf1_dark.close()
+    plt.close(fig1_dark)
+    return scatter_light, scatter_dark
+
+def create_line_plot_example():
+    # Create line plot - LIGHT VERSION
+    fig2_light, ax2 = plt.subplots(figsize=(8, 5), facecolor='white')
+    ax2.set_facecolor('white')
+    x_line = np.linspace(0, 10, 100)
+    y_line1 = np.sin(x_line)
+    y_line2 = np.cos(x_line)
+    ax2.plot(x_line, y_line1, label='Sin(x)', linewidth=2, color='blue')
+    ax2.plot(x_line, y_line2, label='Cos(x)', linewidth=2, color='orange')
+    ax2.set_xlabel('Time (s)', color='black')
+    ax2.set_ylabel('Amplitude', color='black')
+    ax2.set_title('Line Plot: Waveform Analysis', color='black')
+    ax2.tick_params(colors='black')
+    ax2.legend(facecolor='white', edgecolor='black', labelcolor='black')
+    ax2.grid(True, alpha=0.3, color='gray')
+    for spine in ax2.spines.values():
+        spine.set_edgecolor('black')
+
+    buf2_light = io.BytesIO()
+    fig2_light.savefig(buf2_light, format='png', dpi=150, bbox_inches='tight')
+    buf2_light.seek(0)
+    line_light = buf2_light.read()
+    buf2_light.close()
+    plt.close(fig2_light)
+
+    # Create line plot - DARK VERSION
+    fig2_dark, ax2 = plt.subplots(figsize=(8, 5), facecolor='#1e1e1e')
+    ax2.set_facecolor('#1e1e1e')
+    ax2.plot(x_line, y_line1, label='Sin(x)', linewidth=2, color='#3498db')
+    ax2.plot(x_line, y_line2, label='Cos(x)', linewidth=2, color='#f39c12')
+    ax2.set_xlabel('Time (s)', color='white')
+    ax2.set_ylabel('Amplitude', color='white')
+    ax2.set_title('Line Plot: Waveform Analysis', color='white')
+    ax2.tick_params(colors='white')
+    ax2.legend(facecolor='#1e1e1e', edgecolor='white', labelcolor='white')
+    ax2.grid(True, alpha=0.3, color='gray')
+    for spine in ax2.spines.values():
+        spine.set_edgecolor('white')
+
+    buf2_dark = io.BytesIO()
+    fig2_dark.savefig(buf2_dark, format='png', dpi=150, bbox_inches='tight')
+    buf2_dark.seek(0)
+    line_dark = buf2_dark.read()
+    buf2_dark.close()
+    plt.close(fig2_dark)
+
+    return line_light, line_dark,
+
+def create_histogram__plot_example():
+    # Create histogram - LIGHT VERSION
+    fig3_light, ax3 = plt.subplots(figsize=(8, 5), facecolor='white')
+    ax3.set_facecolor('white')
+    data_hist = np.random.normal(100, 15, 1000)
+    ax3.hist(data_hist, bins=30, alpha=0.7, color='green', edgecolor='black')
+    ax3.set_xlabel('Value', color='black')
+    ax3.set_ylabel('Frequency', color='black')
+    ax3.set_title('Histogram: Data Distribution', color='black')
+    ax3.tick_params(colors='black')
+    mean_line = ax3.axvline(data_hist.mean(), color='red', linestyle='--', linewidth=2,
+                            label=f'Mean: {data_hist.mean():.2f}')
+    ax3.legend(facecolor='white', edgecolor='black', labelcolor='black')
+    ax3.grid(True, alpha=0.3, axis='y', color='gray')
+    for spine in ax3.spines.values():
+        spine.set_edgecolor('black')
+
+    buf3_light = io.BytesIO()
+    fig3_light.savefig(buf3_light, format='png', dpi=150, bbox_inches='tight')
+    buf3_light.seek(0)
+    hist_light = buf3_light.read()
+    buf3_light.close()
+    plt.close(fig3_light)
+
+    # Create histogram - DARK VERSION
+    fig3_dark, ax3 = plt.subplots(figsize=(8, 5), facecolor='#1e1e1e')
+    ax3.set_facecolor('#1e1e1e')
+    ax3.hist(data_hist, bins=30, alpha=0.7, color='#2ecc71', edgecolor='white')
+    ax3.set_xlabel('Value', color='white')
+    ax3.set_ylabel('Frequency', color='white')
+    ax3.set_title('Histogram: Data Distribution', color='white')
+    ax3.tick_params(colors='white')
+    ax3.axvline(data_hist.mean(), color='#e74c3c', linestyle='--', linewidth=2,
+                label=f'Mean: {data_hist.mean():.2f}')
+    ax3.legend(facecolor='#1e1e1e', edgecolor='white', labelcolor='white')
+    ax3.grid(True, alpha=0.3, axis='y', color='gray')
+    for spine in ax3.spines.values():
+        spine.set_edgecolor('white')
+
+    buf3_dark = io.BytesIO()
+    fig3_dark.savefig(buf3_dark, format='png', dpi=150, bbox_inches='tight')
+    buf3_dark.seek(0)
+    hist_dark = buf3_dark.read()
+    buf3_dark.close()
+    plt.close(fig3_dark)
+
+    return hist_light, hist_dark
+
 
 # Example usage
 if __name__ == "__main__":
-    # Create a new report
-    report = HTMLTestReport(title="Hardware Test Report - PCB Rev 2.1")
+    # Create a new report with sticky header and version badge
+    report = HTMLTestReport(
+        title="Voyager 1088 - PIA2 PreTest",
+        sticky_header=True,  # Set to False if you don't want sticky header
+        version="0.4.8"  # Test script version - determines gradient colors
+    )
 
-    # Add header with test information
-    report.add_header({
-        "Serial Number": "SN-2024-001234",
-        "Test Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "Operator": "John Doe",
-        "Test Station": "Station 3",
-        "Firmware Version": "v1.2.3"
-    })
+    # Add navbar items
+    report.add_navbar_item("Serial Number", "SN-2024-001234")
+    report.add_navbar_item("Test Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    report.add_navbar_item("Operator", "John Doe")
+    report.add_navbar_item("Test Station", "Station 3")
+    report.add_navbar_item("Firmware Version", "v1.2.3")
+    report.add_navbar_item("Board Revision", "Rev 2.1")
 
     # Add a section with test results
     report.start_section("Power Supply Tests", category="voltage")
@@ -756,6 +1157,33 @@ if __name__ == "__main__":
         upper_spec_col="Upper Limit (°C)"
     )
     report.end_section()
+
+    # Add matplotlib plots section using add_plot() method
+    try:
+
+        report.start_section("Data Visualization", category="custom")
+
+
+
+        scatter_light, scatter_dark = create_scatter_plot_example()
+        report.add_dual_plot(scatter_light, scatter_dark,
+                             title="Figure 1: Scatter plot showing correlation between variables")
+
+
+        line_light, line_dark = create_line_plot_example()
+        report.add_dual_plot(line_light, line_dark,
+                             title="Figure 2: Line plot showing signal waveforms over time")
+
+        hist_light, hist_dark = create_histogram__plot_example()
+        report.add_dual_plot(hist_light, hist_dark,
+                             title="Figure 3: Histogram showing distribution of measured values")
+
+        report.end_section()
+
+    except ImportError:
+        report.start_section("Data Visualization", category="custom")
+        report.add_line("⚠️ Matplotlib not available - cannot generate plots", status="warning")
+        report.end_section()
 
     # Save the report
     report.save("test_report.html")
