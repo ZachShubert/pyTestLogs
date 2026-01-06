@@ -10,6 +10,7 @@ from typing import List, Dict, Optional, Union
 import io
 import matplotlib.pyplot as plt
 import numpy as np
+import webbrowser
 
 
 class HTMLTestReport:
@@ -18,25 +19,36 @@ class HTMLTestReport:
     Supports banners, headers, sections, tables, plots, and more.
     """
 
-    def __init__(self, title: str = "Test Report", sticky_header: bool = False, version: Optional[str] = None):
+    def __init__(self, title: str = "Test Report", sticky_header: bool = False, version: Optional[str] = None, test_log_path: str = None, collapsible: bool = False):
         """
         Initialize a new HTML test report.
 
-        Args:
-            title: The title of the test report
-            sticky_header: If True, banner and navbar stay fixed at top when scrolling
-            version: Test script version in format "major.minor.patch" (e.g., "1.2.3")
-                    Each number determines the gradient color for banner, navbar, and footer
+        :param title: Report title displayed in banner
+        :type title: str
+        :param sticky_header: Keep banner fixed when scrolling
+        :type sticky_header: bool
+        :param version: Version string "major.minor.patch" for color gradients
+        :type version: str, optional
+        :param test_log_path: Path to test log directory for footer link
+        :type test_log_path: str, optional
+        :param collapsible: Enable collapsible sections
+        :type collapsible: bool
+
+        .. versionadded:: 1.0.0
         """
         self.title = title
         self.sticky_header = sticky_header
         self.version = version
+        self.collapsible = collapsible
+        self.test_log_path = test_log_path
         self.lines = []
         self.last_table_index = None  # Track the last table position
         self.last_table_specs = None  # Track spec columns for auto pass/fail
-        self.navbar_items = []  # Store navbar items
+        self.header_items = []  # Store banner items
         self.footer_class = 'no-version'  # Will be set in _init_html
+        self.section_counter = 0  # Track section IDs for collapsible functionality
         self._init_html()
+        self.current_section_title = None
 
     def _init_html(self):
         """Initialize the HTML document with styles and header."""
@@ -44,10 +56,8 @@ class HTMLTestReport:
 
         # Determine classes and gradients based on version
         banner_gradient = ''
-        navbar_gradient = ''
         footer_gradient = ''
         banner_class = 'no-version'
-        navbar_class = 'no-version'
         footer_class = 'no-version'
 
         # Build version display for banner
@@ -77,22 +87,16 @@ class HTMLTestReport:
                 patch_color = color_palette[int(patch) % len(color_palette)]
 
                 banner_class = 'with-version'
-                navbar_class = 'with-version'
                 footer_class = 'with-version'
 
                 # Create gradient styles with actual color values
                 banner_gradient = f"""
         .banner.with-version {{
-            background: linear-gradient(135deg, {major_color} 0%, #34495e 35%) !important;
-        }}"""
-
-                navbar_gradient = f"""
-        .navbar.with-version {{
-            background: linear-gradient(135deg, {minor_color} 0%, #ecf0f1 35%) !important;
+            background: linear-gradient(90deg, {major_color} 0%, #ecf0f1 25%, #ecf0f1 75%, {minor_color} 100%) !important;
         }}
 
-        [data-theme="dark"] .navbar.with-version {{
-            background: linear-gradient(135deg, {minor_color} 0%, #2d2d2d 35%) !important;
+        [data-theme="dark"] .banner.with-version {{
+            background: linear-gradient(90deg, {major_color} 0%, #2d2d2d 25%, #2d2d2d 75%, {minor_color} 100%) !important;
         }}"""
 
                 footer_gradient = f"""
@@ -115,7 +119,7 @@ class HTMLTestReport:
             --bg-color: #ffffff;
             --text-color: #333333;
             --banner-bg: #2c3e50;
-            --banner-text: #ffffff;
+            --banner-text: #000000;
             --header-bg: #ecf0f1;
             --section-bg: #f8f9fa;
             --border-color: #dee2e6;
@@ -147,10 +151,13 @@ class HTMLTestReport:
             color: var(--text-color);
             line-height: 1;
             transition: background-color 0.3s, color 0.3s;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
         }}
 
         .banner {{
-            color: var(--banner-text);
+            color: var(--text-color);
             padding: 10px 10px;
             display: flex;
             justify-content: space-between;
@@ -158,6 +165,9 @@ class HTMLTestReport:
             box-shadow: 0 2px 4px rgba(0,0,0,0.2);
             position: relative;
             z-index: 100;
+            flex-wrap: wrap;
+            gap: 10px;
+            flex-shrink: 0;
         }}
 
         .banner.no-version {{
@@ -178,60 +188,42 @@ class HTMLTestReport:
         .banner-version {{
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
             font-size: 20px;
-            # background: rgba(255,255,255,0.0);
-            color: var(--banner-text);
-            padding: 6px 12px;
-            border-radius: 4px;
+            color: var(--text-color);
+            font-weight: 600;
         }}
-
-        .navbar {{
-            padding: 10px 10px;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.2);
-            position: relative;
-            z-index: 99;
-        }}
-
-        .navbar.no-version {{
-            background-color: var(--header-bg);
-        }}
-        {navbar_gradient}
-
-        .navbar.sticky {{
-            position: sticky;
-            top: 0;
-        }}
-
-        .banner.sticky + .navbar.sticky {{
-            top: 52px; /* Height of banner */
-        }}
-
-        .navbar-container {{
-            max-width: 1200px;
-            margin: 0 auto;
+        
+        .banner-items-container {{
             display: flex;
             flex-wrap: wrap;
             gap: 10px;
+            flex: 1;
+            justify-content: center;
         }}
 
-        .navbar-item {{
-            background-color: var(--bg-color);
+        .banner-item {{
+            color: var(--text-color);
+            background-color: rgba(0, 0, 0, 0.025);
             padding: 5px 10px;
             border-radius: 6px;
-            border: 1px solid var(--border-color);
+            border: 1px solid rgba(0, 0, 0, 0.2);
             min-width: 150px;
-            flex: 1;
         }}
 
-        .navbar-item-title {{
+        [data-theme="dark"] .banner-item {{
+            background-color: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }}
+
+        .banner-item-title {{
             font-weight: 600;
-            font-size: 18px;
-            color: #7f8c8d;
+            font-size: 12px;
+            color: var(--text-color);
             text-transform: uppercase;
             letter-spacing: 0.5px;
-            margin-bottom: 0px;
+            margin-bottom: 2px;
         }}
 
-        .navbar-item-value {{
+        .banner-item-value {{
             font-size: 16px;
             color: var(--text-color);
             word-wrap: break-word;
@@ -241,7 +233,8 @@ class HTMLTestReport:
             max-width: 1200px;
             margin: 0 auto;
             padding: 10px;
-            padding-bottom: 80px; /* Extra space for sticky footer */
+            flex: 1 0 auto;
+            width: 100%;
         }}
 
         .header {{
@@ -250,7 +243,7 @@ class HTMLTestReport:
             border-radius: 8px;
             margin-bottom: 20px;
             border-left: 4px solid #3498db;
-            display: none; /* Hidden by default, use navbar instead */
+            display: none; /* Hidden by default */
         }}
 
         .header-item {{
@@ -272,6 +265,7 @@ class HTMLTestReport:
         }}
 
         .section-title {{
+            color: var(--text-color);
             font-size: 20px;
             font-weight: 600;
             margin-bottom: 15px;
@@ -279,51 +273,200 @@ class HTMLTestReport:
             border-bottom: 2px solid #3498db;
             padding-bottom: 8px;
         }}
+        
+        .section-title.collapsible {{
+            cursor: pointer;
+            user-select: none;
+            position: relative;
+            padding-right: 30px;
+        }}
+
+        .section-title.collapsible::after {{
+            content: '▼';
+            position: absolute;
+            right: 8px;
+            transition: transform 0.3s;
+            font-size: 14px;
+        }}
+
+        .section-title.collapsible.collapsed::after {{
+            transform: rotate(-90deg);
+        }}
+
+        .section-status {{
+            color: black;
+            display: inline-block;
+            margin-left: 12px;
+            padding: 4px 12px;
+            border-radius: 4px;
+            font-size: 16px;
+            font-weight: 600;
+            vertical-align: middle;
+        }}
+        
+        [data-theme="dark"] .section-status {{
+            color: white;
+        }}
+
+        .section-status-pass {{
+            background-color: #229955;
+        }}
+
+        .section-status-pass::before {{
+            content: '✓ PASS';
+        }}
+
+        .section-status-fail {{
+            background-color: #e74c3c;
+        }}
+
+        .section-status-fail::before {{
+            content: '✗ FAIL';
+        }}
+
+        .section-status-warning {{
+            background-color: #f39c12;
+        }}
+
+        .section-status-warning::before {{
+            content: '⚠ WARNING';
+        }}
+
+        .section-status-running {{
+            background-color: #3498db;
+            animation: pulse 1.5s ease-in-out infinite;
+        }}
+
+        .section-status-running::before {{
+            content: '⟳ RUNNING';
+        }}
+
+        .section-status-data {{
+            background-color: #9b59b6;
+        }}
+
+        .section-status-data::before {{
+            content: '📊 DATA';
+        }}
+
+        .section-status-default {{
+            background-color: #95a5a6;
+        }}
+
+        .section-status-default::before {{
+            content: '● DEFAULT';
+        }}
+
+        @keyframes pulse {{
+            0%, 100% {{
+                opacity: 1;
+            }}
+            50% {{
+                opacity: 0.6;
+            }}
+        }}
+
+        [data-theme="dark"] .section-status-pass {{
+            background-color: #229955;
+        }}
+
+        [data-theme="dark"] .section-status-fail {{
+            background-color: #c0392b;
+        }}
+
+        [data-theme="dark"] .section-status-warning {{
+            background-color: #e67e22;
+        }}
+
+        [data-theme="dark"] .section-status-running {{
+            background-color: #2980b9;
+        }}
+
+        [data-theme="dark"] .section-status-data {{
+            background-color: #8e44ad;
+        }}
+
+        [data-theme="dark"] .section-status-default {{
+            background-color: #7f8c8d;
+        }}
+
+        .section-progress {{
+            display: block;
+            margin-top: 8px;
+            height: 6px;
+            background-color: rgba(0, 0, 0, 0.1);
+            border-radius: 3px;
+            overflow: hidden;
+        }}
+
+        [data-theme="dark"] .section-progress {{
+            background-color: rgba(255, 255, 255, 0.1);
+        }}
+
+        .section-progress-bar {{
+            height: 100%;
+            background-color: #3498db;
+            transition: width 0.3s ease;
+            border-radius: 3px;
+        }}
+
+        .section-progress-bar.animated {{
+            background: linear-gradient(90deg, #3498db 0%, #5dade2 50%, #3498db 100%);
+            background-size: 200% 100%;
+            animation: progressShimmer 1.5s ease-in-out infinite;
+        }}
+
+        .section-progress-bar.complete {{
+            opacity: 0;
+            transition: opacity 0.5s ease-out;
+        }}
+
+        .section-progress.complete {{
+            display: none;
+        }}
+
+        @keyframes progressShimmer {{
+            0% {{
+                background-position: 200% 0;
+            }}
+            100% {{
+                background-position: -200% 0;
+            }}
+        }}
+
+        .section-content {{
+            overflow: hidden;
+            transition: max-height 0.3s ease-out, opacity 0.3s ease-out;
+        }}
+
+        .section-content.collapsed {{
+            max-height: 0 !important;
+            opacity: 0;
+        }}
 
         /* Category color classes for section titles */
-        .section-title.category-voltage {{
-            border-bottom-color: #3498db;
-            color: #3498db;
+        .section-title.category-pass {{
+            border-bottom-color: #27ae60;
         }}
 
-        .section-title.category-current {{
-            border-bottom-color: #e67e22;
-            color: #e67e22;
-        }}
-
-        .section-title.category-connection {{
-            border-bottom-color: #9b59b6;
-            color: #9b59b6;
-        }}
-
-        .section-title.category-temperature {{
+        .section-title.category-fail {{
             border-bottom-color: #e74c3c;
-            color: #e74c3c;
         }}
 
-        .section-title.category-power {{
+        .section-title.category-warning {{
             border-bottom-color: #f39c12;
-            color: #f39c12;
         }}
 
-        .section-title.category-resistance {{
-            border-bottom-color: #16a085;
-            color: #16a085;
+        .section-title.category-running {{
+            border-bottom-color: #3498db;
         }}
 
-        .section-title.category-frequency {{
-            border-bottom-color: #8e44ad;
-            color: #8e44ad;
+        .section-title.category-data {{
+            border-bottom-color: #9b59b6;
         }}
 
-        .section-title.category-digital {{
-            border-bottom-color: #2c3e50;
-            color: #2c3e50;
-        }}
-
-        .section-title.category-custom {{
-            border-bottom-color: #34495e;
-            color: #34495e;
+        .section-title.category-default {{
+            border-bottom-color: #95a5a6;
         }}
 
         [data-theme="dark"] .section-title {{
@@ -357,48 +500,33 @@ class HTMLTestReport:
         }}
 
         /* Category color classes for table headers */
-        .category-voltage th {{
-            background-color: #3498db !important;
+        .category-pass th {{
+            background-color: #27ae60 !important;
             color: white;
         }}
 
-        .category-current th {{
-            background-color: #e67e22 !important;
-            color: white;
-        }}
-
-        .category-connection th {{
-            background-color: #9b59b6 !important;
-            color: white;
-        }}
-
-        .category-temperature th {{
+        .category-fail th {{
             background-color: #e74c3c !important;
             color: white;
         }}
 
-        .category-power th {{
+        .category-warning th {{
             background-color: #f39c12 !important;
             color: white;
         }}
 
-        .category-resistance th {{
-            background-color: #16a085 !important;
+        .category-running th {{
+            background-color: #3498db !important;
             color: white;
         }}
 
-        .category-frequency th {{
-            background-color: #8e44ad !important;
+        .category-data th {{
+            background-color: #9b59b6 !important;
             color: white;
         }}
 
-        .category-digital th {{
-            background-color: #2c3e50 !important;
-            color: white;
-        }}
-
-        .category-custom th {{
-            background-color: #34495e !important;
+        .category-default th {{
+            background-color: #95a5a6 !important;
             color: white;
         }}
 
@@ -519,6 +647,13 @@ class HTMLTestReport:
             color: var(--text-color);
             font-weight: 600;
         }}
+        
+        .footer-path {{
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-size: 20px;
+            color: var(--text-color);
+            font-weight: 600;
+        }}
 
         .footer-theme-toggle {{
             background: var(--section-bg);
@@ -545,17 +680,34 @@ class HTMLTestReport:
             const button = document.querySelector('.footer-theme-toggle');
             button.textContent = newTheme === 'dark' ? '☀️ Light Mode' : '🌙 Dark Mode';
         }}
+        
+        function toggleSection(sectionId) {{
+            const content = document.getElementById(sectionId + '-content');
+            const title = document.getElementById(sectionId + '-title');
+            
+            if (content.classList.contains('collapsed')) {{
+                // Expand
+                content.classList.remove('collapsed');
+                title.classList.remove('collapsed');
+                content.style.maxHeight = content.scrollHeight + 'px';
+            }} else {{
+                // Collapse
+                content.style.maxHeight = content.scrollHeight + 'px';
+                // Force reflow
+                content.offsetHeight;
+                content.classList.add('collapsed');
+                title.classList.add('collapsed');
+            }}
+        }}
     </script>
 </head>
 <body>
     <div class="banner {banner_class}{sticky_class}">
         <h1>{self.title}</h1>
-        {banner_version_html}
-    </div>
-    <div class="navbar {navbar_class}{sticky_class}" id="navbar">
-        <div class="navbar-container" id="navbar-container">
-            <!-- Navbar items will be inserted here -->
+        <div class="banner-items-container" id="banner-items-container">
+            <!-- Banner items will be inserted here -->
         </div>
+        {banner_version_html}
     </div>
     <div class="container">
 """
@@ -564,72 +716,270 @@ class HTMLTestReport:
         # Store footer class for finalize
         self.footer_class = footer_class
 
-    def add_navbar_item(self, title: str, value: str):
+    def add_header_item(self, title: str, value: str):
         """
-        Add an item to the navigation bar.
+        Add an item to the banner.
 
         Args:
             title: The title/label (will be bold and uppercase)
             value: The value/text (will be normal weight)
         """
-        self.navbar_items.append((title, value))
+        self.header_items.append((title, value))
         return self
 
-    def _build_navbar(self) -> str:
-        """Build the navbar HTML from stored items."""
-        if not self.navbar_items:
+    def _build_banner_items(self) -> str:
+        """Build the banner items HTML from stored items."""
+        if not self.header_items:
             return ""
 
-        navbar_html = ""
-        for title, value in self.navbar_items:
-            navbar_html += f"""            <div class="navbar-item">
-                <div class="navbar-item-title">{title}</div>
-                <div class="navbar-item-value">{value}</div>
+        banner_html = ""
+        for title, value in self.header_items:
+            banner_html += f"""            <div class="banner-item">
+                <div class="banner-item-title">{title}</div>
+                <div class="banner-item-value">{value}</div>
             </div>
 """
-        return navbar_html
+        return banner_html
 
     def add_header(self, info: Dict[str, str]):
         """
-        Add header information to the navbar (replaces old header method).
-        This is a convenience method that adds multiple navbar items at once.
+        Add header information to the banner.
+        This is a convenience method that adds multiple header items at once.
 
         Args:
             info: Dictionary of title-value pairs
         """
         for title, value in info.items():
-            self.add_navbar_item(title, value)
+            self.add_header_item(title, value)
         return self
 
-    def start_section(self, title: str, category: Optional[str] = None):
+    def start_section(self, title: str, collapsed: bool = False):
         """
-        Start a new section with a title.
+        Start a new section with progress bar.
 
-        Args:
-            title: Section title
-            category: Optional category for coloring ('voltage', 'current', 'connection',
-                     'temperature', 'power', 'resistance', 'frequency', 'digital', 'custom')
+        :param title: Section title
+        :type title: str
+        :param collapsed: Start in collapsed state
+        :type collapsed: bool
+        :returns: Self for method chaining
+        :rtype: HTMLTestReport
+
+        .. note::
+           All sections automatically get progress bars and default to 'running' status
+
+        .. versionadded:: 1.0.0
         """
-        category_class = f' category-{category}' if category else ''
-        section_html = f'<div class="section">\n    <div class="section-title{category_class}">{title}</div>\n'
+        self.current_section_title = title
+
+        # Build status badge
+        status_badge = f'<span class="section-status section-status-running"></span>'
+
+        # Build progress bar if requested
+        progress_bar = ''
+        section_id = f'section-{self.section_counter}'
+        progress_bar = f'<div class="section-progress"><div id="{section_id}-progress" class="section-progress-bar animated" style="width: 0%"></div></div>'
+
+        if self.collapsible:
+            section_id = f'section-{self.section_counter}'
+            self.section_counter += 1
+
+            collapsed_class = ' collapsed' if collapsed else ''
+            collapsible_class = ' collapsible'
+            onclick = f' onclick="toggleSection(\'{section_id}\')"'
+
+            section_html = f'<div class="section">\n'
+            section_html += f'    <div id="{section_id}-title" class="section-title category-running{collapsible_class}{collapsed_class}"{onclick}>{title}{status_badge}{progress_bar}</div>\n'
+            section_html += f'    <div id="{section_id}-content" class="section-content{collapsed_class}">\n'
+        else:
+            section_id = f'section-{self.section_counter}'
+            self.section_counter += 1
+
+            section_html = f'<div class="section">\n'
+            section_html += f'    <div class="section-title category-running">{title}{status_badge}{progress_bar}</div>\n'
+
         self.lines.append(section_html)
         return self
 
-    def end_section(self):
-        """End the current section."""
-        self.lines.append('</div>\n')
+    def end_section(self, status: Optional[str] = None):
+        """
+        End the current section and optionally set final status.
+
+        Closes the currently open section. Optionally sets the progress bar
+        to 100% and updates the status badge in one call. This is a convenience
+        method that combines update_section_progress(100) and update_section_status()
+        with end_section().
+
+        Args:
+            status (Optional[str]): Optional final status for the section.
+                Valid values: 'pass', 'fail', 'warning', 'data', 'default'.
+                If provided, automatically sets progress to 100% and updates
+                the status badge. If None, section ends without status update.
+
+        Returns:
+            HTMLTestReport: Self for method chaining
+
+        Note:
+            - Always pair this with start_section()
+            - When status is provided, progress bar automatically set to 100%
+            - Progress bar will hide after reaching 100%
+            - Failure to call end_section() will result in malformed HTML
+
+        Example:
+            >>> # Simple section close (manual status control)
+            >>> report.start_section("Power Tests")
+            >>> report.add_line("Test 1")
+            >>> report.update_section_progress("Power Tests", 50)
+            >>> report.add_line("Test 2")
+            >>> report.update_section_progress("Power Tests", 100)
+            >>> report.update_section_status("Power Tests", "pass")
+            >>> report.end_section()  # Just closes section
+
+            >>> # Simplified - end with status (auto 100% progress)
+            >>> report.start_section("Voltage Tests")
+            >>> report.add_line("Test 1")
+            >>> report.update_section_progress("Voltage Tests", 50)
+            >>> report.add_line("Test 2")
+            >>> report.end_section(status="pass")  # Sets 100% AND pass status
+
+            >>> # Failed section
+            >>> report.start_section("Current Tests")
+            >>> report.add_line("Test failed", status="fail")
+            >>> report.end_section(status="fail")  # Sets 100% AND fail status
+
+            >>> # Warning section
+            >>> report.start_section("Connection Tests")
+            >>> report.add_line("Marginal connection", status="warning")
+            >>> report.end_section(status="warning")
+
+            >>> # Data collection (not a test)
+            >>> report.start_section("Data Acquisition")
+            >>> report.add_line("Collected 1000 samples")
+            >>> report.end_section(status="data")
+
+        .. versionadded:: 1.0.0
+        .. versionchanged:: 1.1.0
+           Added status parameter for automatic progress and status setting
+        """
+
+        # If status is provided, set progress to 100% and update status
+        if status is not None:
+            self.update_section_progress(self.current_section_title, 100)  # Complete
+            self.update_section_status(self.current_section_title, status)  # Complete
+
+        if self.collapsible:
+            self.lines.append('    </div>\n')  # Close section-content
+        self.lines.append('</div>\n')  # Close section
+
+        self.current_section_title = None
         return self
 
-    def add_line(self, text: str, status: Optional[str] = None):
+    def update_section_status(self, section_title: str, status: str):
+        """
+        Update the status badge and category color of an existing section.
+
+        Useful for updating test results as tests complete. Changes the
+        status from 'running' to 'pass', 'fail', etc., and updates the
+        section title color to match the new status.
+
+        Args:
+            section_title: The exact title of the section to update
+            status: New status. Valid values:
+                'pass', 'fail', 'warning', 'running', 'data', 'default'
+
+        Returns:
+            HTMLTestReport: Self for method chaining
+
+        Note:
+            This method updates both:
+            - The status badge (colored pill with text)
+            - The category color (section title border and text color)
+
+        Example:
+            >>> report.start_section("Power Tests")  # Defaults to 'running'
+            >>> # ... run tests ...
+            >>> report.update_section_status("Power Tests", "pass")  # Updates badge AND color
+
+        .. versionadded:: 1.0.0
+        .. versionchanged:: 1.1.0
+           Now also updates the section category color to match the status
+        """
+        import re
+
+        for i, line in enumerate(self.lines):
+            if f'class="section-title' in line and section_title in line:
+                # Remove existing status badge
+                line = re.sub(r'<span class="section-status section-status-\w+"></span>', '', line)
+
+                # Remove any existing category class
+                line = re.sub(r' category-\w+', '', line)
+
+                # Add new category class (must be added to the section-title element)
+                # Find the class="section-title and insert after it
+                line = re.sub(
+                    r'class="section-title',
+                    f'class="section-title category-{status}',
+                    line
+                )
+
+                # Add new status badge
+                status_badge = f'<span class="section-status section-status-{status}"></span>'
+
+                # Insert before progress bar if exists, otherwise before closing tag
+                if '<div class="section-progress' in line:
+                    line = line.replace('<div class="section-progress', f'{status_badge}<div class="section-progress')
+                else:
+                    line = line.replace(f'>{section_title}<', f'>{section_title}{status_badge}<')
+
+                self.lines[i] = line
+                break
+        return self
+
+    def update_section_progress(self, section_title: str, progress: int):
+        """
+        Update the progress bar of an existing section.
+
+        Args:
+            section_title: The title of the section to update
+            progress: Progress percentage (0-100)
+        """
+        # Clamp progress to 0-100
+        progress = max(0, min(100, progress))
+
+        # Find the section in the lines
+        for i, line in enumerate(self.lines):
+            if f'class="section-title' in line and section_title in line:
+                # Find and update the progress bar width
+                import re
+                line = re.sub(
+                    r'(<div id="section-\d+-progress" class="section-progress-bar[^"]*" style="width: )\d+(%")',
+                    f'\\g<1>{progress}\\g<2>',
+                    line
+                )
+
+                # When complete, add complete class to hide progress bar
+                if progress >= 100:
+                    line = line.replace(' animated', '')
+                    # Add complete class to progress bar
+                    line = re.sub(
+                        r'(<div id="section-\d+-progress" class="section-progress-bar)"',
+                        r'\1 complete"',
+                        line
+                    )
+                    # Add complete class to progress container
+                    line = line.replace('<div class="section-progress">', '<div class="section-progress complete">')
+
+                self.lines[i] = line
+                break
+        return self
+
+    def add_line(self, text: str):
         """
         Add a line of text.
 
         Args:
             text: The text to add
-            status: Optional status class ('pass', 'fail', 'warning')
         """
-        css_class = f' class="status-{status}"' if status else ''
-        line_html = f'    <div class="line"{css_class}>{text}</div>\n'
+        line_html = f'    <div class="line">{text}</div>\n'
         self.lines.append(line_html)
         return self
 
@@ -650,7 +1000,7 @@ class HTMLTestReport:
             headers: List of column headers
             rows: List of rows, where each row is a list of values (can be empty list or None)
             title: Optional table title
-            category: Optional category for header coloring ('voltage', 'current', 'connection', etc.)
+            category: Optional category for header coloring ('pass', 'fail', 'warning', 'running', 'data', 'default')
             measured_col: Column name containing measured values (for auto pass/fail)
             nominal_col: Column name containing nominal values (requires tolerance_col)
             tolerance_col: Column name containing tolerance values (requires nominal_col)
@@ -889,21 +1239,23 @@ class HTMLTestReport:
         Returns:
             Complete HTML string
         """
-        # Build navbar content
-        navbar_html = self._build_navbar()
+        # Build banner items content
+        banner_items_html = self._build_banner_items()
 
-        # Insert navbar items into the HTML
+        # Insert banner items into the HTML
         full_html = ''.join(self.lines)
         full_html = full_html.replace(
-            '            <!-- Navbar items will be inserted here -->',
-            navbar_html
+            '            <!-- Banner items will be inserted here -->',
+            banner_items_html
         )
 
         # Build footer
         footer_version = f'Version: {self.version}' if self.version else ''
+
         footer = f"""    </div>
     <div class="footer {self.footer_class}">
         <div class="footer-version">{footer_version}</div>
+        <a class= "footer-path" href="file:///{self.test_log_path}" target="_blank">Test Log Can be found here.</a>
         <button class="footer-theme-toggle" onclick="toggleTheme()">🌙 Dark Mode</button>
     </div>
 </body>
@@ -1021,7 +1373,7 @@ def create_line_plot_example():
 
     return line_light, line_dark,
 
-def create_histogram__plot_example():
+def create_histogram_plot_example():
     # Create histogram - LIGHT VERSION
     fig3_light, ax3 = plt.subplots(figsize=(8, 5), facecolor='white')
     ax3.set_facecolor('white')
@@ -1072,39 +1424,68 @@ def create_histogram__plot_example():
 
 # Example usage
 if __name__ == "__main__":
-    # Create a new report with sticky header and version badge
+
+    url = r'file:///C:/Users/Zacha/Documents/GitHub/pyTestLogs/'
+
+    # Create a new report with sticky header, version badge, and collapsible sections
     report = HTMLTestReport(
         title="Voyager 1088 - PIA2 PreTest",
         sticky_header=True,  # Set to False if you don't want sticky header
-        version="0.4.8"  # Test script version - determines gradient colors
+        version="0.1.2",  # Test script version - determines gradient colors
+        collapsible=True  # Enable collapsible sections
     )
 
-    # Add navbar items
-    report.add_navbar_item("Serial Number", "SN-2024-001234")
-    report.add_navbar_item("Test Date", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-    report.add_navbar_item("Operator", "John Doe")
-    report.add_navbar_item("Test Station", "Station 3")
-    report.add_navbar_item("Firmware Version", "v1.2.3")
-    report.add_navbar_item("Board Revision", "Rev 2.1")
+    # Add banner items
+    report.add_header_item("Serial Number", "SN-2024-001234")
+    report.add_header_item("Serial Number", "SN-2024-001234")
+    report.add_header_item("Serial Number", "SN-2024-001234")
+    report.add_header_item("Serial Number", "SN-2024-001234")
+    report.add_header_item("Test Date", datetime.now().strftime("%B %d, %Y %I:%M %p"))
+    report.add_header_item("Operator", "John Doe")
+    report.add_header_item("Test Station", "Station 3")
 
-    # Add a section with test results
-    report.start_section("Power Supply Tests", category="voltage")
+    # Example 1: Section starts with default "running" status and progress bar
+    # Category "running" gives it blue color to match status badge
+    report.start_section("Power Supply Tests", category="running", show_progress=True)
     report.add_line("Testing 3.3V rail...", status="pass")
     report.add_line("Measured voltage: 3.31V (within tolerance)")
+    report.update_section_progress("Power Supply Tests", 33)  # Update to 33%
+    report.save("test_report.html")
+    webbrowser.open_new_tab(url)
+
     report.add_line("Testing 5V rail...", status="pass")
     report.add_line("Measured voltage: 5.02V (within tolerance)")
-    report.add_line_break()
-    report.add_line("Testing 12V rail...", status="fail")
-    report.add_line("Measured voltage: 11.2V (out of tolerance!)")
-    report.end_section()
+    report.update_section_progress("Power Supply Tests", 66)  # Update to 66%
+    report.save("test_report.html")
+    webbrowser.open_new_tab(url)
 
-    # Add a table with auto pass/fail using nominal + tolerance
-    report.start_section("Voltage Measurements", category="voltage")
+    report.add_line_break()
+    report.add_line("Testing 12V rail...", status="pass")
+    report.add_line("Measured voltage: 12.01V (within tolerance)")
+    report.update_section_progress("Power Supply Tests", 100)  # Complete
+    report.update_section_status("Power Supply Tests", "pass")  # Complete
+
+    report.save("test_report.html")
+    webbrowser.open_new_tab(url)
+
+    report.end_section()
+    # Update status after test completes (changes from default "running" to "pass")
+    report.update_section_status("Power Supply Tests", "pass")
+    report.save("test_report.html")
+    webbrowser.open_new_tab(url)
+
+    # Update status after test completes
+
+    report.save("test_report.html")
+    webbrowser.open_new_tab(url)
+
+    # Example 2: Section with status badge (collapsed, failed)
+    report.start_section("Voltage Measurements", category="voltage", collapsed=True, status="fail")
     report.add_table(
         headers=["Rail", "Nominal (V)", "Tolerance (V)", "Measured (V)"],
         rows=[],
         title="Power Rail Test Results",
-        category="voltage",
+        category="fail",  # Red table headers to match fail status
         measured_col="Measured (V)",
         nominal_col="Nominal (V)",
         tolerance_col="Tolerance (V)"
@@ -1116,33 +1497,37 @@ if __name__ == "__main__":
     report.add_table_row(["12.0V", "12.00", "0.50", "11.20"])  # Will show as FAIL
     report.add_table_row(["-5.0V", "-5.00", "0.25", "-5.01"])
     report.end_section()
+    # Update to "fail" because one measurement failed
+    report.update_section_status("Voltage Measurements", "fail")
 
-    # Add a table with auto pass/fail using lower/upper specs
-    report.start_section("Current Measurements", category="current")
+    # Example 3: Section with "pass" category that ends with "pass" status
+    report.start_section("Current Measurements", category="pass")  # Starts as "running"
     report.add_table(
         headers=["Test Point", "Lower Spec (A)", "Upper Spec (A)", "Measured (A)"],
         rows=[
             ["Load 1", "0.90", "1.10", "0.98"],  # PASS
-            ["Load 2", "1.80", "2.20", "2.45"],  # FAIL
+            ["Load 2", "1.80", "2.20", "2.05"],  # PASS
             ["Load 3", "0.45", "0.55", "0.51"],  # PASS
         ],
         title="Current Consumption Tests",
-        category="current",
+        category="pass",  # Green table headers to match pass status
         measured_col="Measured (A)",
         lower_spec_col="Lower Spec (A)",
         upper_spec_col="Upper Spec (A)"
     )
     report.end_section()
+    # All tests passed, update to "pass"
+    report.update_section_status("Current Measurements", "pass")
 
-    # Add another section
-    report.start_section("Communication Tests", category="connection")
+    # Example 4: Section with "warning" category and status (collapsed)
+    report.start_section("Communication Tests", category="warning", collapsed=True)
     report.add_line("I2C bus scan: 4 devices found", status="pass")
     report.add_line("SPI flash ID: 0xEF4018", status="pass")
-    report.add_line("UART loopback test: PASS", status="pass")
+    report.add_line("UART loopback test: MARGINAL", status="warning")
     report.end_section()
 
-    # Add a temperature section
-    report.start_section("Temperature Tests", category="temperature")
+    # Example 5: Section with fail status
+    report.start_section("Temperature Tests", category="temperature", status="fail")
     report.add_table(
         headers=["Sensor", "Lower Limit (°C)", "Upper Limit (°C)", "Measured (°C)"],
         rows=[
@@ -1158,30 +1543,26 @@ if __name__ == "__main__":
     )
     report.end_section()
 
-    # Add matplotlib plots section using add_plot() method
+    # Add matplotlib plots section (collapsed, pass status)
     try:
-
-        report.start_section("Data Visualization", category="custom")
-
-
+        report.start_section("Data Visualization", category="custom", collapsed=True, status="pass")
 
         scatter_light, scatter_dark = create_scatter_plot_example()
         report.add_dual_plot(scatter_light, scatter_dark,
                              title="Figure 1: Scatter plot showing correlation between variables")
 
-
         line_light, line_dark = create_line_plot_example()
         report.add_dual_plot(line_light, line_dark,
                              title="Figure 2: Line plot showing signal waveforms over time")
 
-        hist_light, hist_dark = create_histogram__plot_example()
+        hist_light, hist_dark = create_histogram_plot_example()
         report.add_dual_plot(hist_light, hist_dark,
                              title="Figure 3: Histogram showing distribution of measured values")
 
         report.end_section()
 
     except ImportError:
-        report.start_section("Data Visualization", category="custom")
+        report.start_section("Data Visualization", category="custom", status="fail")
         report.add_line("⚠️ Matplotlib not available - cannot generate plots", status="warning")
         report.end_section()
 
